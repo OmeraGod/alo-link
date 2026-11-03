@@ -10,16 +10,33 @@
   if (typeof module !== 'undefined') { module.exports = { destination }; return; }
   const $ = (id) => document.getElementById(id), repository = 'OmeraGod/alo-link';
   let busy = false, timer, failures = 0, nextAt = 0;
+  async function readyTarget(record) {
+    const target = destination(record, location.search);
+    const health = await fetch(`${target.origin}/api/availability`, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(8000) });
+    const state = await health.json();
+    if (!health.ok || !state.ok || state.state !== 'ready') throw new Error(state.state || 'unavailable');
+    return target;
+  }
+  async function findServer() {
+    try {
+      const response = await fetch(`https://raw.githubusercontent.com/${repository}/main/server.json?t=${Date.now()}`, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error('registry');
+      return await readyTarget(await response.json());
+    } catch {
+      // The raw CDN can retain the previous address briefly after a restart.
+      // Use the public API only as a fallback; ordinary visits need no API quota.
+      const response = await fetch(`https://api.github.com/repos/${repository}/contents/server.json?ref=main&t=${Date.now()}`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error('registry');
+      const file = await response.json();
+      if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.size > 4096) throw new Error('registry');
+      return readyTarget(JSON.parse(atob(file.content.replace(/\s/g, ''))));
+    }
+  }
   async function check() {
     if (busy) return; clearTimeout(timer); busy = true; $('retry').disabled = true; $('entryStatus').textContent = 'Đang kiểm tra kết nối…';
     try {
       if (navigator.onLine === false) throw new Error('offline');
-      const response = await fetch(`https://raw.githubusercontent.com/${repository}/main/server.json?t=${Date.now()}`, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error('registry');
-      const target = destination(await response.json(), location.search);
-      const health = await fetch(`${target.origin}/api/availability`, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10000) });
-      const state = await health.json();
-      if (!health.ok || !state.ok || state.state !== 'ready') throw new Error(state.state || 'unavailable');
+      const target = await findServer();
       $('entryTitle').textContent = 'Kết nối đã sẵn sàng.'; $('entryMessage').textContent = 'Đang đưa bạn đến Alo…'; $('entryStatus').textContent = 'Máy chủ đang hoạt động';
       location.replace(target.href); return;
     } catch (error) {
