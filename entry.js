@@ -17,20 +17,23 @@
     if (!health.ok || !state.ok || state.state !== 'ready') throw new Error(state.state || 'unavailable');
     return target;
   }
-  async function findServer() {
-    try {
+  async function registryAPI() {
+    const response = await fetch(`https://api.github.com/repos/${repository}/contents/server.json?ref=main&t=${Date.now()}`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error('registry');
+    const file = await response.json();
+    if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.size > 4096) throw new Error('registry');
+    return readyTarget(JSON.parse(atob(file.content.replace(/\s/g, ''))));
+  }
+  async function registryRaw() {
       const response = await fetch(`https://raw.githubusercontent.com/${repository}/main/server.json?t=${Date.now()}`, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(8000) });
       if (!response.ok) throw new Error('registry');
       return await readyTarget(await response.json());
-    } catch {
-      // The raw CDN can retain the previous address briefly after a restart.
-      // Use the public API only as a fallback; ordinary visits need no API quota.
-      const response = await fetch(`https://api.github.com/repos/${repository}/contents/server.json?ref=main&t=${Date.now()}`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(8000) });
-      if (!response.ok) throw new Error('registry');
-      const file = await response.json();
-      if (file.encoding !== 'base64' || typeof file.content !== 'string' || file.size > 4096) throw new Error('registry');
-      return readyTarget(JSON.parse(atob(file.content.replace(/\s/g, ''))));
-    }
+  }
+  async function findServer() {
+    // Explicit recovery prioritizes the current registry over the raw CDN.
+    const restore = new URLSearchParams(location.search).has('restore');
+    try { return await (restore ? registryAPI() : registryRaw()); }
+    catch { return restore ? registryRaw() : registryAPI(); }
   }
   async function check() {
     if (busy) return; clearTimeout(timer); busy = true; $('retry').disabled = true; $('entryStatus').textContent = 'Đang kiểm tra kết nối…';
